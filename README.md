@@ -7,8 +7,10 @@ plus a demo client. It lets any HTTP service charge **per-request, on-chain paym
 using **account abstraction (SNIP-9 Outside Execution)** so the payer signs off-chain and never
 touches gas.
 
-> **Validated live on Starknet Sepolia.** Full cycle settled on-chain — proof tx
-> [`0x6bc19443…a901f`](https://sepolia.starkscan.co/tx/0x6bc19443c6df905e07a4c80c9ce905d6ab9ac43b48289cc67943f84cc5a901f).
+> **Validated live on Starknet Sepolia** — the full loop in this repo (server → facilitator → client)
+> settled on-chain: proof tx
+> [`0x541e54e0…4db4824`](https://sepolia.starkscan.co/tx/0x541e54e0dffcbd5d0935eaabd3bc7364602c7984506a795b9dae390a4db4824)
+> (`ACCEPTED_ON_L2` / `SUCCEEDED`), produced by the code here.
 >
 > Extracted from the [Vadum Lab](https://vadum-lab.com) **Mycelium** project as a reusable component.
 > Testnet (Sepolia) reference implementation — production custody/security is out of scope.
