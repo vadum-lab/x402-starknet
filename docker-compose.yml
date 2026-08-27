@@ -1,0 +1,31 @@
+# x402 Starknet facilitator — standalone sidecar.
+#   cp .env.example .env && $EDITOR .env
+#   docker compose up -d --build
+#   curl -s http://127.0.0.1:3402/health
+#
+# Default = SELF-SUBMIT mode (no AVNU): the facilitator submits the OutsideExecution and pays the gas.
+# For AVNU (paymaster) mode: set CMD to ["npm","run","start:avnu"] and provide PAYMASTER_*.
+services:
+  x402-facilitator:
+    build:
+      context: ./facilitator
+      dockerfile_inline: |
+        FROM node:22-alpine
+        WORKDIR /app
+        COPY package.json ./
+        RUN npm install --no-audit --no-fund
+        COPY . .
+        CMD ["npm", "start"]
+    environment:
+      PORT: "3000"
+      STARKNET_RPC_URL: "${STARKNET_RPC_URL}"          # Sepolia RPC (e.g. Alchemy free tier)
+      X402_ASSET: "${X402_ASSET:-0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d}"  # STRK Sepolia (18 dec)
+      X402_PAY_TO: "${X402_PAY_TO}"                    # payment recipient (validated at /verify)
+      FACILITATOR_ADDRESS: "${FACILITATOR_ADDRESS}"    # funded Starknet Sepolia account (pays gas)
+      FACILITATOR_PRIVATE_KEY: "${FACILITATOR_PRIVATE_KEY}"  # SECRET — never commit
+      PAYMASTER_ENDPOINT: "${PAYMASTER_ENDPOINT:-}"    # AVNU mode only
+      PAYMASTER_API_KEY: "${PAYMASTER_API_KEY:-}"      # AVNU mode only
+      PAYMASTER_NETWORK: "starknet:sepolia"
+    ports:
+      - "127.0.0.1:3402:3000"
+    restart: unless-stopped

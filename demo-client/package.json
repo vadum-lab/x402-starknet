@@ -1,0 +1,20 @@
+{
+  "name": "x402-starknet-demo-client",
+  "version": "0.0.1",
+  "description": "x402 demo client for Starknet — pays a 402-gated request via SNIP-9",
+  "type": "module",
+  "scripts": {
+    "start": "tsx selfsubmit.ts",
+    "start:selfsubmit": "tsx selfsubmit.ts",
+    "start:avnu": "tsx index.ts"
+  },
+  "dependencies": {
+    "starknet": "10.6.8"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0"
+  },
+  "license": "MIT"
+}

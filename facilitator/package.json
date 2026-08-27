@@ -1,0 +1,22 @@
+{
+  "name": "x402-starknet-facilitator",
+  "version": "0.0.1",
+  "description": "x402 payment facilitator for Starknet — /verify + /settle (SNIP-9 outside execution, self-submit)",
+  "type": "module",
+  "scripts": {
+    "start": "tsx selfsubmit.ts",
+    "start:selfsubmit": "tsx selfsubmit.ts",
+    "start:avnu": "tsx index.ts"
+  },
+  "dependencies": {
+    "@types/node": "^26.2.0",
+    "express": "^4.22.2",
+    "starknet": "10.6.8"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.25",
+    "tsx": "^4.23.12",
+    "typescript": "^5.9.3"
+  },
+  "license": "MIT"
+}
