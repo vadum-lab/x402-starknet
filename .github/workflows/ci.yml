@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [facilitator, demo-client]
+        package: [facilitator, demo-client, server]
     defaults:
       run:
         working-directory: ${{ matrix.package }}

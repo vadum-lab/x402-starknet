@@ -1,0 +1,19 @@
+{
+  "name": "x402-starknet-server",
+  "version": "0.0.1",
+  "description": "Minimal x402 server example — gates a resource behind an on-chain payment (Starknet)",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "start": "tsx server.ts"
+  },
+  "dependencies": {
+    "express": "^4.22.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.25",
+    "@types/node": "^26.2.0",
+    "tsx": "^4.23.12",
+    "typescript": "^5.9.3"
+  }
+}

@@ -29,3 +29,25 @@ services:
     ports:
       - "127.0.0.1:3402:3000"
     restart: unless-stopped
+
+  x402-server:
+    build:
+      context: ./server
+      dockerfile_inline: |
+        FROM node:22-alpine
+        WORKDIR /app
+        COPY package.json ./
+        RUN npm install --no-audit --no-fund
+        COPY . .
+        CMD ["npm", "start"]
+    environment:
+      PORT: "8000"
+      FACILITATOR_URL: "http://x402-facilitator:3000"   # reach the facilitator on the compose network
+      X402_PAY_TO: "${X402_PAY_TO}"
+      X402_ASSET: "${X402_ASSET:-0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d}"
+      X402_AMOUNT: "${X402_AMOUNT:-50000000000000000}"   # price in atomic units (0.05 STRK by default)
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      - x402-facilitator
+    restart: unless-stopped

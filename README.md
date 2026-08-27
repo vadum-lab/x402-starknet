@@ -46,6 +46,7 @@ touches gas.
 
 ```
 facilitator/     Node/TypeScript sidecar — POST /verify + POST /settle, GET /health
+server/          minimal example server — gates a resource behind payment (emits 402, relays to the facilitator)
 demo-client/     TypeScript — receives 402, signs SNIP-9, replays with the payment header
 docker-compose.yml
 .env.example
@@ -65,13 +66,25 @@ docker-compose.yml
 ```bash
 cp .env.example .env && $EDITOR .env
 
-# run the facilitator
+# start the facilitator + the example server
 docker compose up -d --build
-curl -s http://127.0.0.1:3402/health
+curl -s http://127.0.0.1:3402/health   # facilitator
+curl -s http://127.0.0.1:8000/health   # example server
 
-# run the demo client (point X402_ENDPOINT at any x402-speaking server)
-cd demo-client && npm install && npm start
+# run the demo client against the example server (full local loop)
+cd demo-client && npm install && X402_ENDPOINT=http://localhost:8000/x402/hello npm start
 ```
+
+The client's first request gets a **402** with the price; it signs a SNIP-9 authorization, replays with a
+`PAYMENT-SIGNATURE` header, the server relays it to the facilitator (`/verify` then `/settle`), and — once
+settled on-chain — the resource is served with the settlement `reglement_tx`.
+
+### The example server
+
+`server/server.ts` is ~60 lines and holds **no keys**: it answers `402` with the price, and on a
+`PAYMENT-SIGNATURE` header it calls the facilitator's `/verify` + `/settle`, then serves the resource.
+Point it at your own logic by editing the `resource()` function. Config: `FACILITATOR_URL`, `X402_PAY_TO`,
+`X402_ASSET`, `X402_AMOUNT` (price in atomic units).
 
 ## Notes
 
