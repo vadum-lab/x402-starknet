@@ -1,5 +1,7 @@
 # x402 on Starknet
 
+[![CI](https://github.com/vadum-lab/x402-starknet/actions/workflows/ci.yml/badge.svg)](https://github.com/vadum-lab/x402-starknet/actions/workflows/ci.yml)
+
 An open-source **[x402](https://github.com/coinbase/x402) (HTTP 402) payment facilitator for Starknet**,
 plus a demo client. It lets any HTTP service charge **per-request, on-chain payments** on Starknet,
 using **account abstraction (SNIP-9 Outside Execution)** so the payer signs off-chain and never
