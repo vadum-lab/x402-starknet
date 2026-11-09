@@ -5,7 +5,8 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
-    "start": "tsx server.ts"
+    "start": "tsx server.ts",
+    "test": "node --import tsx --test test/*.test.ts"
   },
   "dependencies": {
     "express": "^4.22.2"

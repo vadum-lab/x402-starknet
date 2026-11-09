@@ -88,8 +88,17 @@ settled on-chain — the resource is served with the settlement `reglement_tx`.
 Point it at your own logic by editing the `resource()` function. Config: `FACILITATOR_URL`, `X402_PAY_TO`,
 `X402_ASSET`, `X402_AMOUNT` (price in atomic units).
 
+## Tests
+
+`cd facilitator && npm install && npm test` (and the same in `server/`). The tests run the real services
+against a fake Starknet RPC node and a fake facilitator on localhost, with no network and no real keys.
+
 ## Notes
 
+- `/verify` checks the signed transfer against the **`requirements` sent by the resource server**, and
+  requires the exact amount. A resource server must build these itself, never accept them from the client.
+- `/settle` reports success only when the transaction's `execution_status` is `SUCCEEDED`. A transaction
+  accepted on L2 but reverted answers `success: false`, with reason `invalid_transaction_state`.
 - **`starknet.js` is pinned to `10.6.8`** in both `package.json` files. v10 uses object-form
   constructors (`new Account({ provider, address, signer })`); mixing v6/v10 breaks `new Account`.
 - **Node ≥ 22** (required by starknet.js v10) — the Docker image uses `node:22-alpine`.

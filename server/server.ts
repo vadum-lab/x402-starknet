@@ -56,9 +56,10 @@ app.post('/x402/hello', async (req, res) => {
   } catch {
     return res.status(400).json({ error: 'invalid PAYMENT-SIGNATURE (expected base64-encoded JSON)' });
   }
+  // Always this server's own requirements: whatever the client sends is untrusted, including the price.
   const body = JSON.stringify({
     payload: payment.payload,
-    requirements: payment.requirements ?? requirements('/x402/hello'),
+    requirements: requirements('/x402/hello'),
   });
   const post = (path: string) =>
     fetch(`${FACILITATOR}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
