@@ -4,5 +4,5 @@
     "strict": false, "noEmit": true, "skipLibCheck": true, "esModuleInterop": true,
     "types": ["node"]
   },
-  "include": ["server.ts"]
+  "include": ["server.ts", "test/**/*.ts"]
 }

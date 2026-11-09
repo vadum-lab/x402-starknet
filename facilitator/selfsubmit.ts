@@ -81,16 +81,43 @@ function callsTransfereBien(outsideExecution: any, amountAtomic: bigint): boolea
   return recipient === num.toBigInt(PAY_TO) && montant === amountAtomic;
 }
 
+/** Numeric felt comparison; an absent or unparsable value never matches. */
+function memeFelt(a: unknown, b: string): boolean {
+  try {
+    return a != null && a !== '' && num.toBigInt(a as string) === num.toBigInt(b);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The amount the resource server requires, or null when its requirements cannot be honoured: the
+ * facilitator settles one configured asset to one configured recipient, and `amount` must be a
+ * base-10 integer string. Fails closed, so that a missing field never disables the amount check.
+ */
+function montantExige(requirements: any): bigint | null {
+  const amount = requirements?.amount;
+  if (typeof amount !== 'string' || !/^[0-9]+$/.test(amount)) return null;
+  if (!memeFelt(requirements.asset, ASSET) || !memeFelt(requirements.payTo, PAY_TO)) return null;
+  return BigInt(amount);
+}
+
 app.post('/verify', async (req, res) => {
   try {
-    const { payload } = req.body ?? {};
+    const { payload, requirements } = req.body ?? {};
+    const required = montantExige(requirements);
+    if (required === null) return res.json({ valid: false, reason: 'invalid_payment_requirements' });
     const inner = payload?.payload ?? {};
     const auth = inner?.authorization ?? {};
     const ot = inner?.outsideTransaction;
     if (!ot || !auth?.from || auth?.amount == null) {
       return res.json({ valid: false, reason: 'payload_incomplet' });
     }
-    const amount = num.toBigInt(auth.amount);
+    // The price comes from the resource server's requirements, never from the payer's declaration.
+    if (num.toBigInt(auth.amount) !== required) {
+      return res.json({ valid: false, reason: 'invalid_exact_starknet_payload_amount_mismatch' });
+    }
+    const amount = required;
     if (!callsTransfereBien(ot.outsideExecution, amount)) {
       return res.json({ valid: false, reason: 'calls_non_conformes' });
     }
@@ -117,7 +144,13 @@ app.post('/settle', async (req, res) => {
     // Soumission SÉRIALISÉE (nonce séquentiel) pour supporter des règlements concurrents.
     const transaction_hash = await soumettreSerialise(ot);
     console.log(`[settle] executeFromOutside → ${transaction_hash} (attente ACCEPTED_ON_L2…)`);
-    await provider.waitForTransaction(transaction_hash);   // hors verrou → confirmations en parallèle
+    const receipt: any = await provider.waitForTransaction(transaction_hash);   // hors verrou → confirmations en parallèle
+    // waitForTransaction resolves as soon as the transaction is accepted, including when it reverted:
+    // ACCEPTED_ON_L2 says it was included, only execution_status says the transfer happened.
+    if (receipt.execution_status !== 'SUCCEEDED') {
+      console.log(`[settle] échec on-chain (${receipt.execution_status}) : ${transaction_hash}`);
+      return res.json({ success: false, reason: 'invalid_transaction_state', txHash: transaction_hash });
+    }
     console.log(`[settle] réglé : https://sepolia.starkscan.co/tx/${transaction_hash}`);
     res.json({ success: true, txHash: transaction_hash });
   } catch (e: any) {

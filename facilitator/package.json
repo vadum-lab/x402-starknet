@@ -6,7 +6,8 @@
   "scripts": {
     "start": "tsx selfsubmit.ts",
     "start:selfsubmit": "tsx selfsubmit.ts",
-    "start:avnu": "tsx index.ts"
+    "start:avnu": "tsx index.ts",
+    "test": "node --import tsx --test test/*.test.ts"
   },
   "dependencies": {
     "@types/node": "^26.2.0",
