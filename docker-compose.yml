@@ -4,7 +4,7 @@
 #   curl -s http://127.0.0.1:3402/health
 #
 # Default = SELF-SUBMIT mode (no AVNU): the facilitator submits the OutsideExecution and pays the gas.
-# For AVNU (paymaster) mode: set CMD to ["npm","run","start:avnu"] and provide PAYMASTER_*.
+# AVNU (paymaster) mode is NOT migrated to the registered `exact` scheme (pre-scheme format); see README.
 services:
   x402-facilitator:
     build:
@@ -20,12 +20,14 @@ services:
       PORT: "3000"
       STARKNET_RPC_URL: "${STARKNET_RPC_URL}"          # Sepolia RPC (e.g. Alchemy free tier)
       X402_ASSET: "${X402_ASSET:-0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d}"  # STRK Sepolia (18 dec)
-      X402_PAY_TO: "${X402_PAY_TO}"                    # payment recipient (validated at /verify)
+      X402_NETWORK: "${X402_NETWORK:-starknet:SN_SEPOLIA}"  # CAIP-2 id; the RPC node must be on this network
+      X402_PAY_TO: "${X402_PAY_TO}"                    # optional allow-list: only this recipient is served
+      X402_SETTLE_WAIT_MS: "${X402_SETTLE_WAIT_MS:-60000}"  # how long /settle waits before settlement_pending
       FACILITATOR_ADDRESS: "${FACILITATOR_ADDRESS}"    # funded Starknet Sepolia account (pays gas)
       FACILITATOR_PRIVATE_KEY: "${FACILITATOR_PRIVATE_KEY}"  # SECRET — never commit
       PAYMASTER_ENDPOINT: "${PAYMASTER_ENDPOINT:-}"    # AVNU mode only
       PAYMASTER_API_KEY: "${PAYMASTER_API_KEY:-}"      # AVNU mode only
-      PAYMASTER_NETWORK: "starknet:sepolia"
+      PAYMASTER_NETWORK: "starknet:sepolia"            # AVNU mode only (not migrated)
     ports:
       - "127.0.0.1:3402:3000"
     restart: unless-stopped
@@ -43,8 +45,10 @@ services:
     environment:
       PORT: "8000"
       FACILITATOR_URL: "http://x402-facilitator:3000"   # reach the facilitator on the compose network
+      X402_NETWORK: "${X402_NETWORK:-starknet:SN_SEPOLIA}"
       X402_PAY_TO: "${X402_PAY_TO}"
       X402_ASSET: "${X402_ASSET:-0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d}"
+      X402_MAX_TIMEOUT_SECONDS: "${X402_MAX_TIMEOUT_SECONDS:-300}"
       X402_AMOUNT: "${X402_AMOUNT:-50000000000000000}"   # price in atomic units (0.05 STRK by default)
     ports:
       - "127.0.0.1:8000:8000"

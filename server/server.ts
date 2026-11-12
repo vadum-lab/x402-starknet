@@ -1,12 +1,13 @@
 /**
  * Minimal x402 server — gates a resource behind an on-chain payment on Starknet.
+ * Registered `exact` scheme, x402 v2 over HTTP (transport headers PAYMENT-REQUIRED / PAYMENT-SIGNATURE /
+ * PAYMENT-RESPONSE).
  *
- *   no PAYMENT-SIGNATURE header  → 402 + PaymentRequirements (the price)
- *   with PAYMENT-SIGNATURE       → verify + settle via the facilitator; on success, serve the resource
+ *   no PAYMENT-SIGNATURE header  → 402 + PAYMENT-REQUIRED (the price and the facilitator's feePayer)
+ *   with PAYMENT-SIGNATURE       → facilitator /verify then /settle; on success, serve the resource
  *
- * The server holds NO keys and does NO crypto: it emits the 402 and relays the payment to the
- * facilitator (this repo's `facilitator/`), which verifies the SNIP-9 authorization and settles
- * it on Starknet. Point your client's endpoint at POST /x402/hello.
+ * The server holds NO keys and does NO crypto. It builds the requirements itself, copying `feePayer`
+ * verbatim from its facilitator's /supported, and never takes requirements from the client.
  */
 import express from 'express';
 
@@ -17,22 +18,36 @@ const FACILITATOR = process.env.FACILITATOR_URL ?? 'http://localhost:3402';
 const PAY_TO = process.env.X402_PAY_TO ?? '';
 const ASSET = process.env.X402_ASSET
   ?? '0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d'; // STRK Sepolia (public)
-const NETWORK = process.env.X402_NETWORK ?? 'starknet:sepolia';
+const NETWORK = process.env.X402_NETWORK ?? 'starknet:SN_SEPOLIA';
 const AMOUNT = process.env.X402_AMOUNT ?? '50000000000000000';   // atomic units (default 0.05 STRK, 18 dec)
-const SYMBOL = process.env.X402_ASSET_SYMBOL ?? 'STRK';
-const DECIMALS = Number(process.env.X402_ASSET_DECIMALS ?? 18);
+const MAX_TIMEOUT_SECONDS = Number(process.env.X402_MAX_TIMEOUT_SECONDS ?? 300);
+const FEE_PAYER_TTL_MS = 30_000;
+
+const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64');
+
+let feePayerCache: { value: string; at: number } | undefined;
+
+/** The sponsor address, verbatim from the facilitator's /supported entry for this network. */
+async function feePayer(): Promise<string> {
+  if (feePayerCache && Date.now() - feePayerCache.at < FEE_PAYER_TTL_MS) return feePayerCache.value;
+  const supported: any = await (await fetch(`${FACILITATOR}/supported`)).json();
+  const kind = (supported?.kinds ?? []).find(
+    (k: any) => k?.scheme === 'exact' && k?.network === NETWORK && typeof k?.extra?.feePayer === 'string');
+  if (!kind) throw new Error(`facilitator does not support exact on ${NETWORK}`);
+  feePayerCache = { value: kind.extra.feePayer, at: Date.now() };
+  return feePayerCache.value;
+}
 
 /** x402 v2 PaymentRequirements for the gated resource. */
-function requirements(resource: string) {
+function requirements(sponsor: string) {
   return {
     scheme: 'exact',
     network: NETWORK,
+    amount: AMOUNT,                 // atomic string
     asset: ASSET,
     payTo: PAY_TO,
-    amount: AMOUNT,                 // atomic string
-    resource,
-    maxTimeoutSeconds: 300,
-    extra: { symbol: SYMBOL, decimals: DECIMALS },
+    maxTimeoutSeconds: MAX_TIMEOUT_SECONDS,
+    extra: { feePayer: sponsor },
   };
 }
 
@@ -41,45 +56,81 @@ function resource() {
   return { result: `🔓 unlocked at ${new Date().toISOString()}` };
 }
 
+const paymentRequired = (req: express.Request, sponsor: string, error: string) => ({
+  x402Version: 2,
+  error,
+  resource: { url: `${req.protocol}://${req.get('host')}${req.originalUrl}`, mimeType: 'application/json' },
+  accepts: [requirements(sponsor)],
+});
+
 app.post('/x402/hello', async (req, res) => {
-  const header = req.header('PAYMENT-SIGNATURE');
+  let sponsor: string;
+  try {
+    sponsor = await feePayer();
+  } catch (e) {
+    console.error(`[x402 server] facilitator unavailable: ${e instanceof Error ? e.message : e}`);
+    return res.status(502).json({ error: 'payment facilitator unavailable' });
+  }
+  const challenge = (error: string) => {
+    const body = paymentRequired(req, sponsor, error);
+    return res.status(402).set('PAYMENT-REQUIRED', b64(body)).json(body);
+  };
 
   // 1) Not paid yet → answer 402 with the price.
-  if (!header) {
-    return res.status(402).json({ x402Version: 2, accepts: [requirements('/x402/hello')] });
-  }
+  const header = req.header('PAYMENT-SIGNATURE');
+  if (!header) return challenge('PAYMENT-SIGNATURE header is required');
 
   // 2) Payment presented → decode, then verify + settle via the facilitator.
-  let payment: any;
+  let paymentPayload: unknown;
   try {
-    payment = JSON.parse(Buffer.from(header, 'base64').toString('utf8'));
+    paymentPayload = JSON.parse(Buffer.from(header, 'base64').toString('utf8'));
   } catch {
     return res.status(400).json({ error: 'invalid PAYMENT-SIGNATURE (expected base64-encoded JSON)' });
   }
   // Always this server's own requirements: whatever the client sends is untrusted, including the price.
-  const body = JSON.stringify({
-    payload: payment.payload,
-    requirements: requirements('/x402/hello'),
-  });
-  const post = (path: string) =>
-    fetch(`${FACILITATOR}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
-      .then((r) => r.json());
+  const body = JSON.stringify({ x402Version: 2, paymentPayload, paymentRequirements: requirements(sponsor) });
+  const post = async (path: string): Promise<any> => {
+    const r = await fetch(`${FACILITATOR}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+    return r.json();
+  };
 
-  const verify = await post('/verify').catch((e) => ({ valid: false, reason: String(e) }));
-  if (!verify.valid) {
-    return res.status(402).json({ error: 'payment not valid', reason: verify.reason, accepts: [requirements('/x402/hello')] });
+  let verify: any;
+  try { verify = await post('/verify'); } catch (e) {
+    console.error(`[x402 server] /verify failed: ${e instanceof Error ? e.message : e}`);
+    return res.status(502).json({ error: 'payment facilitator unavailable' });
   }
-  const settle = await post('/settle').catch((e) => ({ success: false, reason: String(e) }));
-  if (!settle.success) {
-    return res.status(402).json({ error: 'settlement failed', reason: settle.reason });
+  if (!verify?.isValid) return failure(verify?.invalidReason, challenge);
+
+  let settle: any;
+  try { settle = await post('/settle'); } catch (e) {
+    // The outcome is unknown: the transaction may have been broadcast. Say so, do not invite a blind retry.
+    console.error(`[x402 server] /settle failed: ${e instanceof Error ? e.message : e}`);
+    return res.status(502).json({ error: 'settlement outcome unknown' });
+  }
+  if (!settle?.success) {
+    // A non-terminal settlement_pending carries the hash: the client reconciles on chain before re-paying.
+    res.set('PAYMENT-RESPONSE', b64(settle ?? {}));
+    return failure(settle?.errorReason, challenge);
   }
 
-  // 3) Paid → serve the resource (echo the on-chain settlement tx).
-  res.json({ ...resource(), reglement_tx: settle.txHash });
+  // 3) Paid → serve the resource, with the settlement response (transaction hash).
+  res.set('PAYMENT-RESPONSE', b64(settle)).json({ ...resource(), transaction: settle.transaction });
+
+  /** Malformed payment → 400; unexpected → 500; a payment that failed → 402 with a fresh challenge. */
+  function failure(reason: string | undefined, again: (error: string) => unknown) {
+    const code = typeof reason === 'string' ? reason : 'unexpected_error';
+    if (['invalid_payload', 'invalid_x402_version', 'invalid_scheme', 'invalid_network'].includes(code)) {
+      return res.status(400).json({ error: code });
+    }
+    if (code.startsWith('unexpected_') || code === 'invalid_payment_requirements') {
+      return res.status(500).json({ error: code });
+    }
+    return again(code);
+  }
 });
 
 app.get('/health', (_req, res) =>
-  res.json({ ok: true, payTo: PAY_TO, asset: ASSET, amount: AMOUNT, facilitator: FACILITATOR }));
+  res.json({ ok: true, network: NETWORK, payTo: PAY_TO, asset: ASSET, amount: AMOUNT, facilitator: FACILITATOR }));
 
 const port = Number(process.env.PORT ?? 8000);
 app.listen(port, () =>

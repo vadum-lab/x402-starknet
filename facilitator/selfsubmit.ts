@@ -7,16 +7,19 @@
  * dépendance externe : des comptes Starknet Sepolia financés (facilitateur pour le gas, payeur en
  * actif test) — tout via faucet, rien « sur demande ».
  *
- * Endpoints attendus par le gate Python (`core/.../x402/facilitator_client.py`) :
- *   POST /verify  { payload, requirements } -> { valid, payer, reason }
- *   POST /settle  { payload, requirements } -> { success, txHash, reason }
- * ``payload`` = PaymentPayload x402 : { payload: { authorization, outsideTransaction } }.
- * ``outsideTransaction`` = objet produit par starknet.js `getOutsideTransaction` côté client.
+ * Routes (schéma `exact` enregistré, ADR-0022) :
+ *   GET  /supported  → { kinds: [{ …, extra: { feePayer } }], extensions, signers }
+ *   POST /verify     { paymentPayload, paymentRequirements } → { isValid, invalidReason?, payer? }   (verify.ts)
+ *   POST /settle     même corps → { success, transaction, network, payer?, errorReason? }            (settle.ts)
  *
  * ⚠️ POC non testé en live (comptes requis). starknet.js v10 ; adapter si l'API bouge.
  */
 import express from 'express';
-import { Account, RpcProvider, Contract, cairo, num } from 'starknet';
+import { Account, RpcProvider, num } from 'starknet';
+import { NETWORKS, parseAddress, type Network } from './scheme.js';
+import { rpcChain, toOutsideTransaction } from './chain.js';
+import { SettleCache, settlePayment, type SettleDeps } from './settle.js';
+import { supported, verifyPayment, type VerifyDeps } from './verify.js';
 
 const app = express();
 app.use(express.json({ limit: '256kb' }));
@@ -60,103 +63,32 @@ async function soumettreSerialise(ot: any): Promise<string> {
   }
 }
 
-const ERC20_ABI = [
-  { name: 'balanceOf', type: 'function', state_mutability: 'view',
-    inputs: [{ name: 'account', type: 'core::starknet::contract_address::ContractAddress' }],
-    outputs: [{ type: 'core::integer::u256' }] },
-];
+const NETWORK = (process.env.X402_NETWORK ?? 'starknet:SN_SEPOLIA') as Network;
+if (!NETWORKS.includes(NETWORK)) throw new Error(`X402_NETWORK must be one of ${NETWORKS.join(', ')}`);
+const optionalAddress = (v?: string) => (v ? parseAddress(v) : undefined);
 
-/** Vérifie qu'une OutsideExecution transfère bien ``amount`` de l'actif vers ``PAY_TO`` (structurel). */
-function callsTransfereBien(outsideExecution: any, amountAtomic: bigint): boolean {
-  const calls = outsideExecution?.calls ?? [];
-  if (calls.length !== 1) return false;
-  const c = calls[0];
-  // Adresses comparées en BigInt : un felt ignore les zéros de tête (0x0433… === 0x433…).
-  const to = num.toBigInt(c.to ?? c.contractAddress ?? 0);
-  // calldata d'un transfer(recipient, amount:u256) = [recipient, low, high]
-  const cd = (c.calldata ?? []).map((x: any) => num.toBigInt(x));
-  if (to !== num.toBigInt(ASSET) || cd.length < 3) return false;
-  const recipient = cd[0];
-  const montant = cd[1] + (cd[2] << 128n);   // u256 low + high
-  return recipient === num.toBigInt(PAY_TO) && montant === amountAtomic;
-}
+const deps: VerifyDeps = {
+  chain: rpcChain(provider, facilitator),
+  network: NETWORK,
+  feePayer: parseAddress(FAC_ADDRESS),      // the executor account is the announced feePayer
+  asset: optionalAddress(process.env.X402_ASSET),
+  payTo: optionalAddress(process.env.X402_PAY_TO),
+  now: () => BigInt(Math.floor(Date.now() / 1000)),
+  log: (m) => console.error(`[verify] ${m}`),
+};
 
-/** Numeric felt comparison; an absent or unparsable value never matches. */
-function memeFelt(a: unknown, b: string): boolean {
-  try {
-    return a != null && a !== '' && num.toBigInt(a as string) === num.toBigInt(b);
-  } catch {
-    return false;
-  }
-}
+app.get('/supported', (_req, res) => res.json(supported(deps)));
 
-/**
- * The amount the resource server requires, or null when its requirements cannot be honoured: the
- * facilitator settles one configured asset to one configured recipient, and `amount` must be a
- * base-10 integer string. Fails closed, so that a missing field never disables the amount check.
- */
-function montantExige(requirements: any): bigint | null {
-  const amount = requirements?.amount;
-  if (typeof amount !== 'string' || !/^[0-9]+$/.test(amount)) return null;
-  if (!memeFelt(requirements.asset, ASSET) || !memeFelt(requirements.payTo, PAY_TO)) return null;
-  return BigInt(amount);
-}
+app.post('/verify', async (req, res) => res.json(await verifyPayment(deps, req.body)));
 
-app.post('/verify', async (req, res) => {
-  try {
-    const { payload, requirements } = req.body ?? {};
-    const required = montantExige(requirements);
-    if (required === null) return res.json({ valid: false, reason: 'invalid_payment_requirements' });
-    const inner = payload?.payload ?? {};
-    const auth = inner?.authorization ?? {};
-    const ot = inner?.outsideTransaction;
-    if (!ot || !auth?.from || auth?.amount == null) {
-      return res.json({ valid: false, reason: 'payload_incomplet' });
-    }
-    // The price comes from the resource server's requirements, never from the payer's declaration.
-    if (num.toBigInt(auth.amount) !== required) {
-      return res.json({ valid: false, reason: 'invalid_exact_starknet_payload_amount_mismatch' });
-    }
-    const amount = required;
-    if (!callsTransfereBien(ot.outsideExecution, amount)) {
-      return res.json({ valid: false, reason: 'calls_non_conformes' });
-    }
-    // bornes temporelles
-    const now = BigInt(Math.floor(Date.now() / 1000));
-    const before = num.toBigInt(ot.outsideExecution?.execute_before ?? auth.validUntil ?? 0);
-    if (before !== 0n && now > before) return res.json({ valid: false, reason: 'expire' });
-    // solde de l'actif du payeur suffisant
-    const token = new Contract({ abi: ERC20_ABI as any, address: ASSET, providerOrAccount: provider });
-    const bal = num.toBigInt((await token.balanceOf(auth.from)).toString());
-    if (bal < amount) return res.json({ valid: false, reason: 'solde_actif_insuffisant' });
-    // la validité de la SIGNATURE est enforced à /settle (la chaîne rejette une sig invalide).
-    res.json({ valid: true, payer: auth.from, reason: null });
-  } catch (e: any) {
-    res.status(200).json({ valid: false, reason: `verify_error:${e?.message ?? 'unknown'}` });
-  }
-});
+const settleDeps: SettleDeps = {
+  ...deps,
+  submit: (from, message, signature) => soumettreSerialise(toOutsideTransaction(from, message, signature)),
+  cache: new SettleCache(),
+  waitMs: Number(process.env.X402_SETTLE_WAIT_MS ?? 60_000),
+};
 
-app.post('/settle', async (req, res) => {
-  try {
-    const ot = req.body?.payload?.payload?.outsideTransaction;
-    if (!ot) return res.status(200).json({ success: false, reason: 'outside_transaction_absente' });
-    // Le facilitateur soumet l'OutsideExecution du payeur — il paie le gas (pas de paymaster).
-    // Soumission SÉRIALISÉE (nonce séquentiel) pour supporter des règlements concurrents.
-    const transaction_hash = await soumettreSerialise(ot);
-    console.log(`[settle] executeFromOutside → ${transaction_hash} (attente ACCEPTED_ON_L2…)`);
-    const receipt: any = await provider.waitForTransaction(transaction_hash);   // hors verrou → confirmations en parallèle
-    // waitForTransaction resolves as soon as the transaction is accepted, including when it reverted:
-    // ACCEPTED_ON_L2 says it was included, only execution_status says the transfer happened.
-    if (receipt.execution_status !== 'SUCCEEDED') {
-      console.log(`[settle] échec on-chain (${receipt.execution_status}) : ${transaction_hash}`);
-      return res.json({ success: false, reason: 'invalid_transaction_state', txHash: transaction_hash });
-    }
-    console.log(`[settle] réglé : https://sepolia.starkscan.co/tx/${transaction_hash}`);
-    res.json({ success: true, txHash: transaction_hash });
-  } catch (e: any) {
-    res.status(200).json({ success: false, reason: `settle_error:${e?.message ?? 'unknown'}` });
-  }
-});
+app.post('/settle', async (req, res) => res.json(await settlePayment(settleDeps, req.body)));
 
 app.get('/health', async (_req, res) => {
   res.json({ ok: true, mode: 'self-submit', facilitator: FAC_ADDRESS, payTo: PAY_TO, asset: ASSET });
@@ -168,4 +100,3 @@ app.listen(port, () =>
 
 // Note utile pour l'aller-retour BigInt côté JSON : le client sérialise les felts en hex string ;
 // starknet.js accepte les BigNumberish string, donc `executeFromOutside(ot)` fonctionne tel quel.
-void cairo;  // gardé pour extension (compile de calldata côté verify si besoin)
