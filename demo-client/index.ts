@@ -1,4 +1,9 @@
 /**
+ * NOT MIGRATED to the registered `exact` scheme (ADR-0022 leaves the AVNU mode undecided).
+ * This file still speaks the pre-scheme format and is not typechecked or tested by CI. Use the default
+ * self-submit entry point (`npm start`).
+ */
+/**
  * Client de démo x402 (POC) — un « agent » qui paie une ressource protégée par x402 sur Starknet.
  *
  * Flux : POST l'endpoint gaté → reçoit 402 + PaymentRequirements → signe l'autorisation SNIP-9

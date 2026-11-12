@@ -1,4 +1,9 @@
 /**
+ * NOT MIGRATED to the registered `exact` scheme (ADR-0022 leaves the AVNU mode undecided).
+ * This file still speaks the pre-scheme format and is not typechecked or tested by CI. Use the default
+ * self-submit entry point (`npm start`).
+ */
+/**
  * Facilitateur x402 Starknet (POC) — sidecar Node.
  *
  * Expose /verify et /settle attendus par le gate Python (`core/.../x402/facilitator_client.py`).
