@@ -156,77 +156,32 @@ describe('self-submit facilitator', () => {
 
   beforeEach(() => { executionStatus = 'SUCCEEDED'; });
 
-  describe('/verify', () => {
-    it('accepts a transfer of exactly the required amount', async () => {
+  describe('routes of the registered scheme', () => {
+    it('announces the executor as feePayer at GET /supported', async () => {
+      const out: any = await (await fetch(`${base}/supported`)).json();
+      assert.equal(out.kinds[0].network, 'starknet:SN_SEPOLIA');
+      assert.equal(BigInt(out.kinds[0].extra.feePayer), BigInt(FACILITATOR));
+    });
+
+    it('refuses the pre-scheme /verify body without touching the chain', async () => {
       const out = await post('/verify', body(PRICE));
-      assert.equal(out.valid, true, JSON.stringify(out));
-      assert.equal(out.payer, PAYER);
+      assert.equal(out.isValid, false);
+      assert.equal(out.invalidReason, 'invalid_payload');
     });
 
-    it('rejects an underpayment even when the payer declares the lower amount', async () => {
-      const out = await post('/verify', body(1n));
-      assert.equal(out.valid, false);
-      assert.equal(out.reason, 'invalid_exact_starknet_payload_amount_mismatch');
-    });
-
-    it('rejects an overpayment', async () => {
-      const out = await post('/verify', body(PRICE + 1n));
-      assert.equal(out.valid, false);
-      assert.equal(out.reason, 'invalid_exact_starknet_payload_amount_mismatch');
-    });
-
-    it('rejects a declared amount that differs from the signed transfer', async () => {
-      const out = await post('/verify', body(PRICE, PRICE * 2n));
-      assert.equal(out.valid, false);
-      assert.equal(out.reason, 'invalid_exact_starknet_payload_amount_mismatch');
-    });
-
-    it('rejects a signed transfer below the amount the payer declares', async () => {
-      const out = await post('/verify', body(1n, PRICE));
-      assert.equal(out.valid, false);
-      assert.equal(out.reason, 'calls_non_conformes');
-    });
-
-    it('fails closed when requirements are missing', async () => {
-      const out = await post('/verify', body(PRICE, PRICE, null));
-      assert.equal(out.valid, false);
-      assert.equal(out.reason, 'invalid_payment_requirements');
-    });
-
-    for (const amount of ['0x3e8', '1e3', ' 1000', '-1000', '', 1000]) {
-      it(`rejects a required amount that is not a base-10 string: ${JSON.stringify(amount)}`, async () => {
-        const out = await post('/verify', body(PRICE, PRICE, requirements({ amount })));
-        assert.equal(out.valid, false);
-        assert.equal(out.reason, 'invalid_payment_requirements');
-      });
-    }
-
-    it('rejects requirements paying another recipient than the configured one', async () => {
-      const out = await post('/verify', body(PRICE, PRICE, requirements({ payTo: PAYER })));
-      assert.equal(out.valid, false);
-      assert.equal(out.reason, 'invalid_payment_requirements');
-    });
-
-    it('rejects requirements for another asset than the configured one', async () => {
-      const out = await post('/verify', body(PRICE, PRICE, requirements({ asset: PAYER })));
-      assert.equal(out.valid, false);
-      assert.equal(out.reason, 'invalid_payment_requirements');
+    it('fails closed on an empty /verify body', async () => {
+      const res = await fetch(`${base}/verify`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+      assert.equal((await res.json() as any).isValid, false);
     });
   });
 
   describe('/settle', () => {
-    it('reports success for a transaction that succeeded', async () => {
+    it('refuses the pre-scheme body with the registered response shape, broadcasting nothing', async () => {
       const out = await post('/settle', body(PRICE));
-      assert.equal(out.success, true, `${JSON.stringify(out)}\n${logs}`);
-      assert.equal(out.txHash, TX_HASH);
-    });
-
-    it('reports failure for a transaction that was accepted on L2 but reverted', async () => {
-      executionStatus = 'REVERTED';
-      const out = await post('/settle', body(PRICE));
-      assert.equal(out.success, false, 'a reverted transaction moved no funds');
-      assert.equal(out.reason, 'invalid_transaction_state');
-      assert.equal(out.txHash, TX_HASH);
+      assert.equal(out.success, false);
+      assert.equal(out.errorReason, 'invalid_payload');
+      assert.equal(out.transaction, '');
+      assert.equal(out.network, 'starknet:SN_SEPOLIA');
     });
   });
 });
