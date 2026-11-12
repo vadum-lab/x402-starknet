@@ -4,5 +4,5 @@
     "strict": false, "noEmit": true, "skipLibCheck": true, "esModuleInterop": true,
     "types": ["node"]
   },
-  "include": ["selfsubmit.ts", "test/**/*.ts"]
+  "include": ["selfsubmit.ts", "scheme.ts", "verify.ts", "chain.ts", "transfers.ts", "settle.ts", "test/**/*.ts"]
 }
